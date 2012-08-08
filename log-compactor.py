@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 # Code is Public Domain. Take all the code you want, we'll just write more.
-# Original author: Krzysztof Kowalczyk (http://blog.kowalczyk.info/article/Compacting-s3-aws-logs.html)
-
 import sys, os, os.path, bz2, stat, shutil
 
 try:
@@ -36,8 +34,9 @@ How it works, roughly:
 * repeat until there are no more logs to process
 """
 
-s3BucketName = "kjklogs"
-logsDir = "kjkpub/"
+s3BucketName = ""
+logsDir = ""
+prefix = ""
 
 BASE_DIR = os.path.expanduser("~/rsynced-data/s3logs")
 
@@ -51,7 +50,7 @@ def compressed_file_name_local(day):
     return os.path.join(compressed_logs_dir(), day + ".bz2")
 
 def compressed_file_name_s3(day):
-    return logsDir + "compressed-access-logs-" + day + ".bz2"
+    return logsDir + prefix + "compressed-access-logs-" + day + ".bz2"
 
 def ensure_dir_exists(path):
     if os.path.exists(path):
@@ -80,9 +79,7 @@ def s3UploadPrivate(local_file_name, remote_file_name):
     k.set_contents_from_filename(local_file_name)
 
 def day_from_name(name):
-    tmp = "access_log-"
-    s = name.find(tmp)
-    day_name_start = s+len(tmp)
+    day_name_start = len(logsDir)+len(prefix)
     day_name_end = day_name_start + len("2009-00-00")
     day = name[day_name_start:day_name_end]
     return day
@@ -91,6 +88,9 @@ def gen_files_for_day(keys):
     curr_day = None
     curr = []
     for key in keys:
+        # Try not to recompress files we've already read and don't get directories.
+        if key.name[-4:] == ".bz2" or key.name == logsDir or "/" in key.name[len(logsDir):]:
+            continue
         day = day_from_name(key.name)
         if day == curr_day:
             curr.append(key)
@@ -149,6 +149,12 @@ def concat_and_compress_files(day, files):
     else:
         new_compressed(file_name, files)
 
+def delete_local_files(day, files):
+    for f in files:
+        os.remove(f)
+    compressedf = compressed_file_name_local(day)
+    os.remove(compressedf)
+
 def delete_keys_from_s3(keys):
     for key in keys:
         print("Deleting %s" % key.name)
@@ -190,7 +196,7 @@ def process_day(day_keys):
     for key in day_keys:
         file_name = file_name_from_s3_name(key.name)
         if file_downloaded(file_name, key.size):
-            print("'%s' already downloaded as '%s'" % (key.name, file_name))            
+            print("'%s' already downloaded as '%s'" % (key.name, file_name))
         else:
             print("downloading '%s' to '%s'" % (key.name, file_name))
         deleted = dl_or_delete_forbidden(key, file_name)
@@ -201,11 +207,12 @@ def process_day(day_keys):
     s3name = compressed_file_name_s3(day)
     s3UploadPrivate(file_name, s3name)
     delete_keys_from_s3(day_keys)
+    delete_local_files(day, files)
 
 def tests():
-    s3name = logsDir + "access_log-2008-09-21-23-45-40-B7CE947BBC3F87B2"
+    s3name = logsDir + prefix + "2008-09-21-23-45-40-B7CE947BBC3F87B2"
     assert day_from_name(s3name) == "2008-09-21"
-    expected_dir = os.path.join(uncompressed_logs_dir(), "access_log-2008-09-21-23-45-40-B7CE947BBC3F87B2")
+    expected_dir = os.path.join(uncompressed_logs_dir(), prefix + "2008-09-21-23-45-40-B7CE947BBC3F87B2")
     assert file_name_from_s3_name(s3name) == expected_dir
 
 def compress_s3_logs():
@@ -214,7 +221,7 @@ def compress_s3_logs():
 
     b = s3Bucket()
     limit = 999
-    all_keys = b.list(logsDir + "access_log-")
+    all_keys = b.list(logsDir + prefix)
     for day_keys in gen_files_for_day(all_keys):
         process_day(day_keys)
         limit -= 1
