@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # Code is Public Domain. Take all the code you want, we'll just write more.
 import sys, os, os.path, bz2, stat, shutil
+import re
 
 try:
     import boto.s3
@@ -35,10 +36,10 @@ How it works, roughly:
 """
 
 s3BucketName = ""
+logsToCompact = ""
 logsDir = ""
-prefix = ""
 
-BASE_DIR = os.path.expanduser("~/rsynced-data/s3logs")
+BASE_DIR = os.path.expanduser("./rsynced-data/s3logs")
 
 def uncompressed_logs_dir():
     return os.path.join(BASE_DIR, "uncompressed")
@@ -50,7 +51,7 @@ def compressed_file_name_local(day):
     return os.path.join(compressed_logs_dir(), day + ".bz2")
 
 def compressed_file_name_s3(day):
-    return logsDir + prefix + "compressed-access-logs-" + day + ".bz2"
+    return logsDir + "compressed-access-logs-" + day + ".bz2"
 
 def ensure_dir_exists(path):
     if os.path.exists(path):
@@ -79,9 +80,8 @@ def s3UploadPrivate(local_file_name, remote_file_name):
     k.set_contents_from_filename(local_file_name)
 
 def day_from_name(name):
-    day_name_start = len(logsDir)+len(prefix)
-    day_name_end = day_name_start + len("2009-00-00")
-    day = name[day_name_start:day_name_end]
+    match = re.search(r'\d{4}-\d{2}-\d{2}', os.path.basename(name))
+    day = match.group()
     return day
 
 def gen_files_for_day(keys):
@@ -103,8 +103,7 @@ def gen_files_for_day(keys):
         yield curr
 
 def file_name_from_s3_name(s3name):
-    # skip kjkpub/ at the beginning
-    name = s3name[len(logsDir):]
+    name = os.path.basename(s3name)
     return os.path.join(uncompressed_logs_dir(), name)
 
 def new_compressed(file_name, files):
@@ -210,9 +209,9 @@ def process_day(day_keys):
     delete_local_files(day, files)
 
 def tests():
-    s3name = logsDir + prefix + "2008-09-21-23-45-40-B7CE947BBC3F87B2"
+    s3name = logsDir + "2008-09-21-23-45-40-B7CE947BBC3F87B2"
     assert day_from_name(s3name) == "2008-09-21"
-    expected_dir = os.path.join(uncompressed_logs_dir(), prefix + "2008-09-21-23-45-40-B7CE947BBC3F87B2")
+    expected_dir = os.path.join(uncompressed_logs_dir(), "2008-09-21-23-45-40-B7CE947BBC3F87B2")
     assert file_name_from_s3_name(s3name) == expected_dir
 
 def compress_s3_logs():
@@ -221,7 +220,8 @@ def compress_s3_logs():
 
     b = s3Bucket()
     limit = 999
-    all_keys = b.list(logsDir + prefix)
+    # Fetch all files we have to match
+    all_keys = b.list(logsToCompact)
     for day_keys in gen_files_for_day(all_keys):
         process_day(day_keys)
         limit -= 1
