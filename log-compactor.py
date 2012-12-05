@@ -4,7 +4,7 @@ import sys, os, os.path, bz2, stat, shutil
 import re
 
 try:
-    import boto.s3
+    import boto.s3.connection
     from boto.s3.key import Key
     from boto.exception import S3ResponseError
 except:
